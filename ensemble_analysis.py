@@ -1,0 +1,139 @@
+"""Ensemble probabilities and ranges for Spiddal; separate from live operational forecast."""
+import datetime as dt
+import json
+import math
+from pathlib import Path
+import re
+import statistics
+
+import requests
+
+LAT, LON = 53.25, -9.30
+MODELS = {
+    "ECMWF IFS": "ecmwf_ifs025_ensemble",
+    "GFS GEFS": "ncep_gefs025",
+    "ICON Europe": "dwd_icon_eu_eps",
+    "ICON Global": "dwd_icon_global_eps",
+    "GEM GEPS": "cmc_gem_geps",
+    "UKMO Global": "ukmo_global_ensemble_20km",
+    "UKMO UK": "ukmo_uk_ensemble_2km",
+}
+VARIABLES = ("precipitation", "wind_gusts_10m")
+MIN_MEMBERS = 10
+RAIN_THRESHOLDS_MM = (0.1, 1.0, 5.0, 10.0)
+GUST_THRESHOLDS_KMH = (50, 70, 90)
+# Member keys only; never count the control run or the ensemble mean.
+MEMBER_PATTERN = re.compile(r"^(precipitation|wind_gusts_10m)_member([0-9]+)$")
+
+
+def percentile(values, fraction):
+    """Linearly interpolated percentile; requires nonempty finite values."""
+    ordered = sorted(values)
+    index = (len(ordered) - 1) * fraction
+    low, high = math.floor(index), math.ceil(index)
+    return round(ordered[low] + (ordered[high] - ordered[low]) * (index - low), 2)
+
+
+def distribution(values, thresholds):
+    """Percentages always use the count of valid members as denominator."""
+    if len(values) < MIN_MEMBERS:
+        return {"valid_members": len(values), "probabilities": None,
+                "p10": None, "median": None, "p90": None}
+    return {
+        "valid_members": len(values),
+        "probabilities": {
+            str(threshold): round(100 * sum(v >= threshold for v in values) / len(values), 1)
+            for threshold in thresholds
+        },
+        "p10": percentile(values, .1),
+        "median": percentile(values, .5),
+        "p90": percentile(values, .9),
+    }
+
+
+def analyse_hourly(hourly):
+    times = hourly["time"]
+    series = {"precipitation": {}, "wind_gusts_10m": {}}
+    for key, values in hourly.items():
+        match = MEMBER_PATTERN.fullmatch(key)
+        if match and isinstance(values, list):
+            series[match.group(1)][match.group(2)] = values
+    output = []
+    for i, timestamp in enumerate(times):
+        row = {"time": timestamp}
+        for variable, thresholds in (
+            ("precipitation", RAIN_THRESHOLDS_MM),
+            ("wind_gusts_10m", GUST_THRESHOLDS_KMH),
+        ):
+            valid = [values[i] for values in series[variable].values()
+                     if i < len(values) and isinstance(values[i], (int, float))
+                     and math.isfinite(values[i]) and values[i] >= 0]
+            row[variable] = distribution(valid, thresholds)
+        output.append(row)
+    daily = []
+    for day in sorted({t[:10] for t in times}):
+        indices = [i for i, t in enumerate(times) if t.startswith(day)]
+        rain_totals = []
+        gust_maxima = []
+        for values in series["precipitation"].values():
+            # Complete local calendar days only. Never interpret partial coverage as daily total.
+            if all(i < len(values) and isinstance(values[i], (int, float))
+                   and math.isfinite(values[i]) and values[i] >= 0 for i in indices):
+                rain_totals.append(sum(values[i] for i in indices))
+        for values in series["wind_gusts_10m"].values():
+            if all(i < len(values) and isinstance(values[i], (int, float))
+                   and math.isfinite(values[i]) and values[i] >= 0 for i in indices):
+                gust_maxima.append(max(values[i] for i in indices))
+        # First and last days may be partial calendar days, even if all returned hours are present.
+        full_day = len(indices) in (23, 24, 25)
+        daily.append({
+            "date": day,
+            "hours_in_response": len(indices),
+            "rain_mm": distribution(rain_totals if full_day else [], RAIN_THRESHOLDS_MM),
+            "max_gust_kmh": distribution(gust_maxima if full_day else [], GUST_THRESHOLDS_KMH),
+        })
+    return {"hourly": output, "daily": daily,
+            "member_series": {v: len(members) for v, members in series.items()}}
+
+
+def retrieve(model):
+    response = requests.get(
+        "https://ensemble-api.open-meteo.com/v1/ensemble",
+        params={"latitude": LAT, "longitude": LON,
+                "timezone": "Europe/Dublin", "forecast_days": 7,
+                "models": model, "hourly": ",".join(VARIABLES)},
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()["hourly"]
+
+
+def main():
+    result = {"retrieved_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "source": "Open-Meteo ensemble API", "latitude": LAT, "longitude": LON,
+              "minimum_members_for_probabilities": MIN_MEMBERS,
+              "note": "Model-relative member frequencies, not calibrated probabilities. "
+                      "Daily figures require a complete local calendar day and valid member hours.",
+              "models": {}}
+    for label, model in MODELS.items():
+        try:
+            analysis = analyse_hourly(retrieve(model))
+            result["models"][label] = {"model_id": model, "status": "ok", **analysis}
+            print(label, "OK", analysis["member_series"],
+                  "days_with_rain_probability",
+                  sum(d["rain_mm"]["probabilities"] is not None for d in analysis["daily"]))
+        except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+            result["models"][label] = {"model_id": model, "status": "error",
+                                       "error": str(exc)[:250]}
+            print(label, "ERROR", str(exc)[:250])
+    if not any(v["status"] == "ok" and
+               any(d["rain_mm"]["probabilities"] is not None for d in v["daily"])
+               for v in result["models"].values()):
+        raise RuntimeError("No usable ensemble forecasts; previous output retained")
+    Path("data").mkdir(exist_ok=True)
+    Path("data/ensemble_latest.json").write_text(json.dumps(result, indent=2))
+    print("Saved data/ensemble_latest.json")
+
+
+if __name__ == "__main__":
+    main()

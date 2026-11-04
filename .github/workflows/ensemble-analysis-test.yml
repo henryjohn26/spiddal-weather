@@ -1,0 +1,29 @@
+name: Ensemble analysis validation
+on:
+  push:
+    branches: [ensemble-expansion]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -p 'test_ensemble_analysis.py' -v
+      - run: python ensemble_analysis.py
+      - name: Validate generated ensemble output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("data/ensemble_latest.json").read_text())
+          ok=[(k,v) for k,v in d["models"].items() if v["status"]=="ok"]
+          assert len(ok)>=5, ok
+          assert any(any(x["rain_mm"]["probabilities"] is not None for x in v["daily"]) for _,v in ok)
+          print("VALIDATION PASSED",len(ok),"models")
+          PY
