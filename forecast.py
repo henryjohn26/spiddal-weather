@@ -46,7 +46,7 @@ def retrieve():
                 raise ValueError("No hourly times returned")
             responses[model] = data
             all_times.update(data["time"])
-            model_status[model] = {"status": "ok", "hours": len(data["time"])}
+            model_status[model] = {"status": "ok", "hours": len(data["time"]), "valid_hours": {v: sum(x is not None for x in data.get(next((k for k in data if k == v or k == f"{v}_{model}"), ""), [])) for v in VARIABLES}}
         except (requests.RequestException, ValueError, KeyError) as exc:
             model_status[model] = {"status": "error", "detail": str(exc)[:200]}
     if not responses:
