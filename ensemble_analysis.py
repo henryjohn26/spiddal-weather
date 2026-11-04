@@ -19,6 +19,8 @@ MODELS = {
     "UKMO UK": "ukmo_uk_ensemble_2km",
 }
 VARIABLES = ("precipitation", "wind_gusts_10m")
+FORECAST_DAYS = {"ECMWF IFS": 15, "GFS GEFS": 15}
+DEFAULT_FORECAST_DAYS = 7
 MIN_MEMBERS = 10
 RAIN_THRESHOLDS_MM = (0.1, 1.0, 5.0, 10.0)
 GUST_THRESHOLDS_KMH = (50, 70, 90)
@@ -96,11 +98,30 @@ def analyse_hourly(hourly):
             "member_series": {v: len(members) for v, members in series.items()}}
 
 
-def retrieve(model):
+def coverage(analysis):
+    """Report actual usable complete-day probabilities, not merely requested days."""
+    daily = analysis["daily"]
+    result = {}
+    for field in ("rain_mm", "max_gust_kmh"):
+        usable = [day["date"] for day in daily
+                  if day[field]["probabilities"] is not None]
+        result[field] = {
+            "usable_days": len(usable),
+            "first_usable_date": usable[0] if usable else None,
+            "last_usable_date": usable[-1] if usable else None,
+            "unusable_dates": [day["date"] for day in daily
+                               if day[field]["probabilities"] is None],
+        }
+    result["returned_hourly_steps"] = len(analysis["hourly"])
+    result["returned_calendar_dates"] = len(daily)
+    return result
+
+
+def retrieve(model, forecast_days=DEFAULT_FORECAST_DAYS):
     response = requests.get(
         "https://ensemble-api.open-meteo.com/v1/ensemble",
         params={"latitude": LAT, "longitude": LON,
-                "timezone": "Europe/Dublin", "forecast_days": 7,
+                "timezone": "Europe/Dublin", "forecast_days": forecast_days,
                 "models": model, "hourly": ",".join(VARIABLES)},
         timeout=120,
     )
@@ -117,13 +138,13 @@ def main():
               "models": {}}
     for label, model in MODELS.items():
         try:
-            analysis = analyse_hourly(retrieve(model))
-            result["models"][label] = {"model_id": model, "status": "ok", **analysis}
+            analysis = analyse_hourly(retrieve(model, FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS)))
+            result["models"][label] = {"model_id": model, "forecast_days_requested": FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS), "status": "ok", "coverage": coverage(analysis), **analysis}
             print(label, "OK", analysis["member_series"],
                   "days_with_rain_probability",
                   sum(d["rain_mm"]["probabilities"] is not None for d in analysis["daily"]))
         except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
-            result["models"][label] = {"model_id": model, "status": "error",
+            result["models"][label] = {"model_id": model, "forecast_days_requested": FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS), "status": "error",
                                        "error": str(exc)[:250]}
             print(label, "ERROR", str(exc)[:250])
     if not any(v["status"] == "ok" and
