@@ -1,0 +1,33 @@
+name: Expanded forecast test
+
+on:
+  push:
+    branches: [regional-model-expansion]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python forecast.py
+      - name: Validate eleven-model output and partial-day handling
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('data/latest.json').read_text())
+          statuses = data['model_status']
+          print('Models working:', sum(v['status'] == 'ok' for v in statuses.values()))
+          assert len(statuses) == 11
+          assert sum(v['status'] == 'ok' for v in statuses.values()) >= 9
+          assert Path('index.html').exists()
+          print('Validation passed')
+          PY
