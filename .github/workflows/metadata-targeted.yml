@@ -1,0 +1,47 @@
+name: Targeted metadata mapping diagnostic
+on:
+  push:
+    branches: [metadata-diagnostic-20261104]
+    paths: [.github/workflows/metadata-targeted.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Test model storage identifiers and freshness across hosts
+        run: |
+          python - <<'PY'
+          import json,urllib.request,urllib.error,datetime,concurrent.futures
+          targets={
+           "ICON Global EPS":["dwd_icon_global_eps","dwd_icon_eps","dwd_icon_eps_global","dwd_icon_eps_native","dwd_icon_global_eps_native","dwd_icon_eps_seamless","dwd_icon_eps_global_native","dwd_icon"],
+           "ICON Europe EPS":["dwd_icon_eu_eps","dwd_icon_eu_eps_native","dwd_icon_eps_eu","dwd_icon_eu"],
+           "GEM Global":["cmc_gem_gdps","cmc_gem_gdps015","cmc_gem_gdps025","cmc_gem_global","cmc_gem","cmc_gem_rdps"],
+          }
+          hosts=["api.open-meteo.com","ensemble-api.open-meteo.com"]
+          now=datetime.datetime.now(datetime.timezone.utc)
+          def query(job):
+            name,ident,host=job
+            url=f"https://{host}/data/{ident}/static/meta.json"
+            try:
+              req=urllib.request.Request(url,headers={"User-Agent":"SpiddalMetadataTargetedDiagnostic/1.0"})
+              with urllib.request.urlopen(req,timeout=12) as r:
+                j=json.load(r)
+                ts=j.get("last_run_initialisation_time")
+                age=round((now-datetime.datetime.fromtimestamp(ts,datetime.timezone.utc)).total_seconds()/3600,1) if isinstance(ts,(int,float)) else None
+                return {"model":name,"id":ident,"host":host,"http":r.status,"initialisation_utc":datetime.datetime.fromtimestamp(ts,datetime.timezone.utc).isoformat() if isinstance(ts,(int,float)) else None,"age_hours":age,"availability_epoch":j.get("last_run_availability_time"),"update_interval_seconds":j.get("update_interval_seconds")}
+            except urllib.error.HTTPError as e:return {"model":name,"id":ident,"host":host,"http":e.code}
+            except Exception as e:return {"model":name,"id":ident,"host":host,"error":str(e)[:130]}
+          jobs=[(name,ident,host) for name,ids in targets.items() for ident in ids for host in hosts]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            results=list(pool.map(query,jobs))
+          print("UTC",now.isoformat())
+          for r in results:print("RESULT",json.dumps(r,sort_keys=True))
+          for name in targets:
+            ok=[r for r in results if r["model"]==name and r.get("http")==200]
+            fresh=[r for r in ok if r.get("age_hours") is not None and -1<=r["age_hours"]<=48]
+            print("SUMMARY",json.dumps({"model":name,"responding":len(ok),"fresh_48h":len(fresh),"fresh_ids":[{"id":r["id"],"host":r["host"],"age_hours":r["age_hours"]} for r in fresh]}))
+          print("NOTE: metadata freshness and identity do not independently prove which run a forecast API returned")
+          PY
