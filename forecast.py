@@ -103,7 +103,7 @@ def main():
 <style>body{{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}}
 table{{border-collapse:collapse;width:100%}}td,th{{padding:.5rem;border-bottom:1px solid #ddd;text-align:left}}
 tr:nth-child(even){{background:#f6f8fa}}.scroll{{overflow-x:auto}}</style></head>
-<body><h1>Spiddal multi-model weather</h1>
+<body><h1>Spiddal multi-model weather</h1><p><a href="ensemble.html">View ensemble probability dashboard</a></p>
 <p>Retrieved (UTC): {html.escape(now)}. Coordinates: {LAT}, {LON}. Source: Open-Meteo.
 Retrieval time is not the model initialization time.</p>
 <p>Rain = complete local calendar-day total (mm); gust = maximum (km/h);

@@ -1,0 +1,34 @@
+name: Ensemble dashboard integration test
+on:
+  push:
+    branches: [ensemble-dashboard]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python forecast.py
+      - run: python ensemble_analysis.py
+      - name: Validate dashboard and data
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          dashboard=Path('ensemble.html').read_text()
+          index=Path('index.html').read_text()
+          data=json.loads(Path('data/ensemble_latest.json').read_text())
+          assert 'ensemble.html' in index
+          assert 'data/ensemble_latest.json' in dashboard
+          for name in ['model','day','rain','gust','summary','daily','hourly']:
+              assert f'id="{name}"' in dashboard, name
+          assert len(data['models'])==7
+          assert any(m['status']=='ok' for m in data['models'].values())
+          print('DASHBOARD INTEGRATION VALIDATED')
+          PY
