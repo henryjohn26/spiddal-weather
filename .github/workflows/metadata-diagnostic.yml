@@ -1,0 +1,81 @@
+name: Temporary model metadata diagnostic
+on:
+  push:
+    branches: [metadata-diagnostic-20261104]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect-model-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Query Open-Meteo metadata without changing forecasts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, urllib.request, urllib.error
+          from datetime import datetime, timezone
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+
+          # API request identifiers from the production scripts. The metadata
+          # storage identifiers may differ: report results, do not assume a match.
+          models = {
+              "ECMWF IFS": "ecmwf_ifs025",
+              "GFS Global": "gfs_global",
+              "ICON Global": "icon_global",
+              "GEM Global": "gem_global",
+              "ARPEGE World": "meteofrance_arpege_world",
+              "UKMO Global": "ukmo_global_deterministic_10km",
+              "UKMO UKV": "ukmo_uk_deterministic_2km",
+              "ICON Europe": "icon_eu",
+              "ARPEGE Europe": "meteofrance_arpege_europe",
+              "DMI HARMONIE Europe": "dmi_harmonie_arome_europe",
+              "KNMI HARMONIE Europe": "knmi_harmonie_arome_europe",
+              "ECMWF IFS ensemble": "ecmwf_ifs025_ensemble",
+              "GFS GEFS": "ncep_gefs025",
+              "ICON Europe ensemble": "dwd_icon_eu_eps",
+              "ICON Global ensemble": "dwd_icon_global_eps",
+              "GEM GEPS": "cmc_gem_geps",
+              "UKMO Global ensemble": "ukmo_global_ensemble_20km",
+              "UKMO UK ensemble": "ukmo_uk_ensemble_2km",
+          }
+          # Alternative storage identifiers to test, not assert as verified.
+          candidates = {
+              "GFS Global": ["ncep_gfs013", "ncep_gfs025"],
+              "ARPEGE World": ["meteofrance_arpege_world025"],
+              "ICON Global": ["dwd_icon"],
+              "ICON Europe": ["dwd_icon_eu"],
+              "GEM Global": ["cmc_gem_gdps"],
+          }
+          fields = ("last_run_initialisation_time", "last_run_modification_time",
+                    "last_run_availability_time", "update_interval_seconds",
+                    "temporal_resolution_seconds")
+          def check(name, ident):
+              url = f"https://api.open-meteo.com/data/{ident}/static/meta.json"
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent":"SpiddalWeatherMetadataDiagnostic/1.0"})
+                  with urllib.request.urlopen(req, timeout=12) as response:
+                      data = json.load(response)
+                      return {"model":name,"identifier":ident,"http":response.status,
+                              "fields":{k:data.get(k) for k in fields},
+                              "top_level_keys":list(data)[:20]}
+              except urllib.error.HTTPError as e:
+                  return {"model":name,"identifier":ident,"http":e.code,"error":"HTTP error"}
+              except Exception as e:
+                  return {"model":name,"identifier":ident,"error":type(e).__name__+": "+str(e)[:140]}
+          tasks=[(name,ident) for name,ident in models.items()]
+          tasks += [(name,ident) for name,alts in candidates.items() for ident in alts]
+          print("DIAGNOSTIC UTC",datetime.now(timezone.utc).isoformat())
+          print("No forecast or production files will be modified.")
+          with ThreadPoolExecutor(max_workers=8) as pool:
+              results=list(pool.map(lambda pair:check(*pair),tasks))
+          for result in results:
+              print(json.dumps(result,sort_keys=True))
+          ok=[r for r in results if r.get("http")==200]
+          print("SUMMARY",json.dumps({"attempts":len(results),"http_200":len(ok),
+                "model_names_with_http_200":sorted(set(r["model"] for r in ok)),
+                "models_without_http_200":sorted(set(models)-set(r["model"] for r in ok))}))
+          # This diagnostic intentionally succeeds even with missing mappings;
+          # results are evidence for investigation, not a production gate.
+          PY
