@@ -1,0 +1,33 @@
+name: Combined forecast and ensemble integration test
+on:
+  push:
+    branches: [ensemble-expansion]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -p 'test_ensemble_analysis.py' -v
+      - run: python forecast.py
+      - run: python ensemble_analysis.py
+      - name: Validate combined output
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          forecast=json.loads(Path("data/latest.json").read_text())
+          ensemble=json.loads(Path("data/ensemble_latest.json").read_text())
+          assert len(forecast["models"])==11
+          assert sum(v["status"]=="ok" for v in forecast["model_status"].values())>=9
+          assert sum(v["status"]=="ok" for v in ensemble["models"].values())>=5
+          assert any(any(day["rain_mm"]["probabilities"] is not None for day in v["daily"]) for v in ensemble["models"].values() if v["status"]=="ok")
+          assert Path("index.html").exists()
+          print("COMBINED FORECAST AND ENSEMBLE VALIDATION PASSED")
+          PY
