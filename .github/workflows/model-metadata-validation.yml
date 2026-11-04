@@ -1,0 +1,48 @@
+name: Model metadata isolated validation
+on:
+  push:
+    branches: [model-run-metadata-test]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Unit tests and existing ensemble tests
+        run: python -m unittest discover -p 'test_*.py'
+      - name: Run both forecast generators in isolated runner
+        run: |
+          python forecast.py
+          python ensemble_analysis.py
+      - name: Verify published schema and metadata integrity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from model_run_metadata import OPERATIONAL,ENSEMBLE
+          o=json.loads(Path("data/latest.json").read_text())
+          e=json.loads(Path("data/ensemble_latest.json").read_text())
+          for data,mapping in ((o,OPERATIONAL),(e,ENSEMBLE)):
+              metadata=data["model_run_metadata"]
+              assert set(metadata)==set(mapping)
+              for model,row in metadata.items():
+                  assert row["run_time_verified"] is False, model
+                  assert row["run_identification"]=="provider_reported_latest_not_forecast_response_verified"
+                  assert row["status"] in ("provider_reported_current","stale_or_invalid","unavailable")
+                  if row["status"]!="provider_reported_current":
+                      assert row["model_run_utc"] is None, model
+              print("METADATA SUMMARY",len(metadata),
+                    {s:sum(r["status"]==s for r in metadata.values())
+                     for s in ("provider_reported_current","stale_or_invalid","unavailable")})
+          assert o["response"]["hourly"]["time"]
+          assert e["models"]
+          assert o["model_run_metadata"]["gem_global"]["model_run_utc"] is None
+          print("PASS: forecast values remain in existing schemas; metadata separately recorded")
+          PY
