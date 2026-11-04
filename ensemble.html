@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spiddal Ensemble Weather Dashboard</title>
+<style>
+:root{color-scheme:light;font-family:system-ui,-apple-system,sans-serif;color:#17314a;background:#f3f7fb}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:1180px;margin:auto;padding:24px 18px 50px}
+header{background:#143653;color:white;padding:26px 0}header .wrap{padding-top:0;padding-bottom:0}
+h1{margin:0;font-size:clamp(1.5rem,3vw,2.2rem)}h2{font-size:1.25rem;margin:0 0 12px}
+p{line-height:1.5}a{color:inherit}header a{color:#c9eaff}.sub{color:#d8e7f3;margin:8px 0 0}
+.panel{background:white;border:1px solid #dbe4ec;border-radius:14px;padding:20px;margin-top:18px;box-shadow:0 2px 7px #1436530a}
+.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:end}label{display:block;font-size:.9rem;font-weight:650;margin-bottom:5px}
+select{font:inherit;padding:10px;border:1px solid #aabccc;border-radius:8px;background:white;min-width:210px}
+.meta{color:#52677b;font-size:.92rem}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:12px;margin-top:16px}
+.tile{border:1px solid #dce5ed;border-radius:10px;padding:14px;background:#f9fbfd}
+.tile strong{font-size:1.65rem;display:block;margin:6px 0}.tile small{color:#50667b}
+.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.93rem}
+th,td{text-align:left;padding:11px 10px;border-bottom:1px solid #e1e8ef;white-space:nowrap}
+th{background:#eaf1f7;position:sticky;top:0}tbody tr:nth-child(even){background:#f8fafc}
+.bar{height:9px;width:110px;background:#e5edf3;border-radius:10px;overflow:hidden;display:inline-block;margin-right:8px}
+.fill{height:100%;background:#2583b5}.muted{color:#687d8f}.note{font-size:.9rem;color:#4f6476}
+.error{color:#9b302a}.pill{display:inline-block;background:#e4f1f8;padding:4px 8px;border-radius:6px;font-size:.85rem}
+@media(max-width:620px){.wrap{padding-left:12px;padding-right:12px}.panel{padding:13px}.bar{width:70px}}
+</style></head>
+<body><header><div class="wrap"><h1>Spiddal · Ensemble forecast</h1>
+<p class="sub">Rainfall probabilities, plausible rainfall ranges and wind-gust risks · 53.25°N, 9.30°W</p>
+<p><a href="index.html">← Operational model forecast</a></p></div></header>
+<main class="wrap">
+<div class="panel"><div class="controls">
+<div><label for="model">Ensemble model</label><select id="model"></select></div>
+<div><label for="rain">Rainfall threshold</label><select id="rain"><option value="0.1">At least 0.1 mm</option><option value="1.0" selected>At least 1 mm</option><option value="5.0">At least 5 mm</option><option value="10.0">At least 10 mm</option></select></div>
+<div><label for="gust">Gust threshold</label><select id="gust"><option value="50">50 km/h</option><option value="70" selected>70 km/h</option><option value="90">90 km/h</option></select></div>
+</div><p class="meta" id="updated">Loading ensemble data…</p><p class="note" id="modelnote"></p></div>
+<section class="panel"><h2>Selected day</h2><div class="controls"><div><label for="day">Local date</label><select id="day"></select></div></div>
+<div class="summary" id="summary"></div></section>
+<section class="panel"><h2>Daily outlook</h2><p class="note">Probabilities are the percentage of valid ensemble members exceeding the selected threshold. Ranges show the 10th–90th percentiles, with the median in parentheses.</p>
+<div class="table-scroll"><table><thead><tr><th>Date</th><th>Rain probability</th><th>Rainfall mm · P10–P90 (median)</th><th>Gust probability</th><th>Daily max gust km/h · P10–P90 (median)</th><th>Members (rain / gust)</th></tr></thead><tbody id="daily"></tbody></table></div></section>
+<section class="panel"><h2>Hourly outlook · selected day</h2><p class="note">Rainfall probabilities refer to each individual hour. Wind-gust probabilities refer to that hour, not the entire day.</p>
+<div class="table-scroll"><table><thead><tr><th>Local time</th><th>Rain probability</th><th>Rain median mm</th><th>Gust probability</th><th>Gust median km/h</th></tr></thead><tbody id="hourly"></tbody></table></div></section>
+<section class="panel"><h2>How to interpret this forecast</h2>
+<p>These are <strong>model-relative ensemble frequencies</strong>, not calibrated real-world probabilities. A 60% reading means 60% of the valid members in the selected model meet the threshold. Do not combine member counts across different models.</p>
+<p>At least 10 valid members are required before a probability or range is displayed. A dash means insufficient members, unavailable data or an incomplete calendar day. Some models have shorter forecast horizons. Missing wind-gust data is not interpreted as calm weather.</p>
+<p class="note">Source: Open-Meteo ensemble API. Times use Europe/Dublin local time. Retrieval time is not the forecast model's initialization time. <a href="data/ensemble_latest.json">View full ensemble data (JSON)</a>.</p>
+</section></main>
+<script>
+const $=id=>document.getElementById(id);
+let dataset=null;
+const fmt=(n,d=0)=>typeof n==="number"&&Number.isFinite(n)?n.toFixed(d):"—";
+const range=x=>x&&x.p10!=null?fmt(x.p10,1)+"–"+fmt(x.p90,1)+" ("+fmt(x.median,1)+")":"—";
+const probability=(x,key)=>x&&x.probabilities&&x.probabilities[key]!=null?x.probabilities[key]:null;
+function bar(p){if(p===null)return '<span class="muted">—</span>';return '<span class="bar"><span class="fill" style="display:block;width:'+Math.max(0,Math.min(100,p))+'%"></span></span>'+fmt(p)+'%'}
+function tile(label,value,foot){const e=document.createElement("div");e.className="tile";const l=document.createElement("small");l.textContent=label;const v=document.createElement("strong");v.textContent=value;const f=document.createElement("small");f.textContent=foot;e.append(l,v,f);return e}
+function render(){
+if(!dataset)return;
+const model=dataset.models[$("model").value], rainKey=$("rain").value,gustKey=$("gust").value;
+$("modelnote").textContent=model.status!=="ok"?"This model is unavailable: "+(model.error||"unknown error"):
+"Detected member series: rain "+model.member_series.precipitation+", gust "+model.member_series.wind_gusts_10m+". Fewer than 10 valid members means no probabilities.";
+const days=model.daily||[];
+const previous=$("day").value;
+$("day").replaceChildren(...days.map(d=>{const o=document.createElement("option");o.value=d.date;o.textContent=d.date;return o}));
+if(days.some(d=>d.date===previous))$("day").value=previous;
+const day=days.find(d=>d.date===$("day").value);
+$("summary").replaceChildren();
+if(day){
+const r=day.rain_mm,g=day.max_gust_kmh;
+$("summary").append(
+tile("Rain ≥ "+rainKey+" mm",probability(r,rainKey)===null?"—":fmt(probability(r,rainKey))+"%","Daily probability"),
+tile("Rainfall median",r.median===null?"—":fmt(r.median,1)+" mm","10th–90th: "+range(r)),
+tile("Gust ≥ "+gustKey+" km/h",probability(g,gustKey)===null?"—":fmt(probability(g,gustKey))+"%","Daily maximum"),
+tile("Maximum gust median",g.median===null?"—":fmt(g.median)+" km/h","10th–90th: "+range(g))
+)}
+$("daily").innerHTML=days.map(d=>'<tr><td>'+d.date+'</td><td>'+bar(probability(d.rain_mm,rainKey))+'</td><td>'+range(d.rain_mm)+'</td><td>'+bar(probability(d.max_gust_kmh,gustKey))+'</td><td>'+range(d.max_gust_kmh)+'</td><td>'+d.rain_mm.valid_members+' / '+d.max_gust_kmh.valid_members+'</td></tr>').join("")||'<tr><td colspan="6">No daily data</td></tr>';
+$("hourly").innerHTML=(model.hourly||[]).filter(h=>h.time.startsWith($("day").value)).map(h=>'<tr><td>'+h.time.slice(11)+'</td><td>'+bar(probability(h.precipitation,rainKey))+'</td><td>'+fmt(h.precipitation.median,1)+'</td><td>'+bar(probability(h.wind_gusts_10m,gustKey))+'</td><td>'+fmt(h.wind_gusts_10m.median)+'</td></tr>').join("")||'<tr><td colspan="5">No hourly data</td></tr>';
+}
+async function load(){
+try{
+const r=await fetch("data/ensemble_latest.json",{cache:"no-store"});if(!r.ok)throw Error("HTTP "+r.status);
+dataset=await r.json();const keys=Object.keys(dataset.models||{});
+if(!keys.length)throw Error("No ensemble models in file");
+$("model").replaceChildren(...keys.map(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;return o}));
+$("updated").textContent="Last retrieved (UTC): "+dataset.retrieved_utc+" · Source: "+dataset.source;
+render();
+}catch(e){$("updated").className="error";$("updated").textContent="Could not load ensemble forecast: "+e.message}
+}
+$("model").addEventListener("change",render);$("rain").addEventListener("change",render);$("gust").addEventListener("change",render);
+$("day").addEventListener("change",render);load();
+</script></body></html>
