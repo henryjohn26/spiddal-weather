@@ -7,6 +7,7 @@ import re
 import statistics
 
 import requests
+from model_run_metadata import ENSEMBLE, collect
 
 LAT, LON = 53.25, -9.30
 MODELS = {
@@ -135,7 +136,7 @@ def main():
               "minimum_members_for_probabilities": MIN_MEMBERS,
               "note": "Model-relative member frequencies, not calibrated probabilities. "
                       "Daily figures require a complete local calendar day and valid member hours.",
-              "models": {}}
+              "models": {}, "model_run_metadata": collect(ENSEMBLE)}
     for label, model in MODELS.items():
         try:
             analysis = analyse_hourly(retrieve(model, FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS)))
