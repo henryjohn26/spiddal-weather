@@ -1,0 +1,19 @@
+name: Spiddal Weather Health Monitor
+on:
+  schedule:
+    - cron: '0 10,16,22 * * *'
+  workflow_dispatch:
+  push:
+    branches: [reliability-monitoring]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify forecast freshness and model coverage
+        run: python monitor_weather.py
