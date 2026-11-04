@@ -25,9 +25,18 @@ jobs:
           for name in ('ECMWF IFS','GFS GEFS'):
               m=d['models'][name]
               assert m['status']=='ok', (name,m.get('error'))
-              assert len(m['daily'])>=14, (name,len(m['daily']))
-              assert m['daily'][-1]['rain_mm']['probabilities'] is not None, (name,'No valid final-day rainfall probabilities')
-              print(name,len(m['daily']),'days',len(m['hourly']),'hours')
+              coverage=m['coverage']
+              usable=coverage['rain_mm']['usable_days']
+              minimum={'ECMWF IFS':13,'GFS GEFS':9}[name]
+              assert usable>=minimum, (name,'usable days',usable,'minimum',minimum)
+              assert coverage['returned_hourly_steps']>=24*10, (name,'hourly steps',coverage)
+              assert coverage['rain_mm']['last_usable_date'] is not None
+              assert coverage['max_gust_kmh']['usable_days']>=minimum, (name,'gust coverage',coverage)
+              print(name,'requested',m['forecast_days_requested'],'days; returned',coverage['returned_calendar_dates'],
+                    'calendar dates; usable rain',usable,'days; usable gust',
+                    coverage['max_gust_kmh']['usable_days'],'days; last rain date',
+                    coverage['rain_mm']['last_usable_date'],'; unusable dates',
+                    coverage['rain_mm']['unusable_dates'])
           for name,m in d['models'].items():
               if name not in ('ECMWF IFS','GFS GEFS'):
                   assert m['forecast_days_requested']==7
