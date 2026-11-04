@@ -37,6 +37,16 @@ jobs:
                     coverage['max_gust_kmh']['usable_days'],'days; last rain date',
                     coverage['rain_mm']['last_usable_date'],'; unusable dates',
                     coverage['rain_mm']['unusable_dates'])
+              if name=='GFS GEFS':
+                  for day in m['daily']:
+                      print('GEFS daily diagnostic',day['date'],
+                            'hours',day['hours_in_response'],
+                            'rain valid members',day['rain_mm']['valid_members'],
+                            'gust valid members',day['max_gust_kmh']['valid_members'])
+                  for row in m['hourly'][::24]:
+                      print('GEFS hourly diagnostic',row['time'],
+                            'rain members',row['precipitation']['valid_members'],
+                            'gust members',row['wind_gusts_10m']['valid_members'])
           for name,m in d['models'].items():
               if name not in ('ECMWF IFS','GFS GEFS'):
                   assert m['forecast_days_requested']==7
