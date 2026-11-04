@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import requests
+from model_run_metadata import OPERATIONAL, collect
 
 LAT, LON = 53.25, -9.30
 MODELS = {
@@ -117,6 +118,7 @@ Maximum gust and temperature may be based on partial-day coverage; check the hou
     Path("data/latest.json").write_text(json.dumps({
         "retrieved_utc": now, "source": "Open-Meteo",
         "models": MODELS, "model_status": status, "response": data,
+        "model_run_metadata": collect(OPERATIONAL),
     }, indent=2))
     Path("index.html").write_text(page)
     print("Updated", now, "rows", len(rows), "models_ok",
