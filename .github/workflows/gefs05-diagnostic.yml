@@ -20,3 +20,18 @@ jobs:
       - run: python -m pip install requests
       - name: Test 15-day GEFS 0.5-degree availability
         run: python diagnostics/gefs05_coverage.py
+      - name: Generate combined ensemble output without publishing
+        run: python ensemble_analysis.py
+      - name: Validate combined GEFS and source provenance
+        run: |
+          python - <<'PY'
+          import json
+          x=json.load(open("data/ensemble_latest.json"))["models"]["GFS GEFS"]
+          assert x["status"] == "ok"
+          for variable in ("rain_mm", "max_gust_kmh"):
+              assert x["coverage"][variable]["usable_days"] >= 14, x["coverage"][variable]
+          counts=x["resolution_sources"]["value_counts"]
+          assert counts["ncep_gefs025_hours"] > 0
+          assert counts["ncep_gefs05_hours"] > 0
+          print("PASS combined GEFS", json.dumps({"coverage":x["coverage"],"provenance":counts},indent=2))
+          PY
