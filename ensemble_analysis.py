@@ -139,9 +139,12 @@ def combine_gefs(high_res, extended):
         raise ValueError("Incompatible GEFS timestamps")
     combined = {"time": list(high_times)}
     provenance = {"ncep_gefs025_hours": 0, "ncep_gefs05_hours": 0, "missing_hours": 0}
-    for key, high_values in high_res.items():
-        if not MEMBER_PATTERN.fullmatch(key):
-            continue
+    primary_keys = {key for key in high_res if MEMBER_PATTERN.fullmatch(key)}
+    extension_keys = {key for key in extended if MEMBER_PATTERN.fullmatch(key)}
+    if primary_keys != extension_keys:
+        raise ValueError("GEFS member identifiers differ between resolutions")
+    for key in sorted(primary_keys):
+        high_values = high_res[key]
         low_values = extended.get(key)
         if not isinstance(low_values, list):
             raise ValueError("Missing extended GEFS member " + key)
@@ -174,8 +177,13 @@ def main():
             provenance = None
             if label == "GFS GEFS":
                 high_res = retrieve(model, FORECAST_DAYS[label])
-                extended = retrieve("ncep_gefs05", FORECAST_DAYS[label])
-                combined, provenance = combine_gefs(high_res, extended)
+                try:
+                    extended = retrieve("ncep_gefs05", FORECAST_DAYS[label])
+                    combined, provenance = combine_gefs(high_res, extended)
+                except (requests.RequestException, KeyError, ValueError, TypeError) as extension_error:
+                    print("GEFS extension unavailable; retaining primary:", str(extension_error)[:250])
+                    combined = high_res
+                    provenance = {"extension_status": "unavailable", "reason": str(extension_error)[:250]}
                 analysis = analyse_hourly(combined)
             else:
                 analysis = analyse_hourly(retrieve(model, FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS)))
