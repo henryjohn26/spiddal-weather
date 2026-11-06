@@ -130,6 +130,38 @@ def retrieve(model, forecast_days=DEFAULT_FORECAST_DAYS):
     return response.json()["hourly"]
 
 
+
+def combine_gefs(high_res, extended):
+    """Use 0.25-degree members first and 0.5-degree members for missing hours."""
+    high_times = high_res["time"]
+    low_indices = {t: i for i, t in enumerate(extended["time"])}
+    if len(low_indices) != len(extended["time"]) or not set(high_times).issubset(low_indices):
+        raise ValueError("Incompatible GEFS timestamps")
+    combined = {"time": list(high_times)}
+    provenance = {"ncep_gefs025_hours": 0, "ncep_gefs05_hours": 0, "missing_hours": 0}
+    for key, high_values in high_res.items():
+        if not MEMBER_PATTERN.fullmatch(key):
+            continue
+        low_values = extended.get(key)
+        if not isinstance(low_values, list):
+            raise ValueError("Missing extended GEFS member " + key)
+        merged = []
+        for i, timestamp in enumerate(high_times):
+            j = low_indices[timestamp]
+            hi = high_values[i] if i < len(high_values) else None
+            lo = low_values[j] if j < len(low_values) else None
+            if isinstance(hi, (int, float)) and math.isfinite(hi) and hi >= 0:
+                merged.append(hi)
+                provenance["ncep_gefs025_hours"] += 1
+            elif isinstance(lo, (int, float)) and math.isfinite(lo) and lo >= 0:
+                merged.append(lo)
+                provenance["ncep_gefs05_hours"] += 1
+            else:
+                merged.append(None)
+                provenance["missing_hours"] += 1
+        combined[key] = merged
+    return combined, provenance
+
 def main():
     result = {"retrieved_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
               "source": "Open-Meteo ensemble API", "latitude": LAT, "longitude": LON,
@@ -139,8 +171,15 @@ def main():
               "models": {}, "model_run_metadata": collect(ENSEMBLE)}
     for label, model in MODELS.items():
         try:
-            analysis = analyse_hourly(retrieve(model, FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS)))
-            result["models"][label] = {"model_id": model, "forecast_days_requested": FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS), "status": "ok", "coverage": coverage(analysis), **analysis}
+            provenance = None
+            if label == "GFS GEFS":
+                high_res = retrieve(model, FORECAST_DAYS[label])
+                extended = retrieve("ncep_gefs05", FORECAST_DAYS[label])
+                combined, provenance = combine_gefs(high_res, extended)
+                analysis = analyse_hourly(combined)
+            else:
+                analysis = analyse_hourly(retrieve(model, FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS)))
+            result["models"][label] = {"model_id": model, "forecast_days_requested": FORECAST_DAYS.get(label, DEFAULT_FORECAST_DAYS), "status": "ok", "coverage": coverage(analysis), **({"resolution_sources": {"primary": model, "extension": "ncep_gefs05", "priority": "0.25-degree values first", "value_counts": provenance}} if provenance is not None else {}), **analysis}
             print(label, "OK", analysis["member_series"],
                   "days_with_rain_probability",
                   sum(d["rain_mm"]["probabilities"] is not None for d in analysis["daily"]))
